@@ -38,6 +38,8 @@ struct EditInfoView: View {
     // 图集
     @State var selectedPhotos = [PhotosPickerItem]()
     @State var addWebImageUrl = ""
+    // 关联输入和编辑的开关
+    @State var isShowRelateTextField = false
     
     var body: some View {
         VStack {
@@ -49,7 +51,7 @@ struct EditInfoView: View {
                 
                 Section {
                     categoryInputView
-                    if info.relateName.isEmpty == false {
+                    if isShowRelateTextField == true {
                         TextField("关联:", text: $info.relateName)
                             .rounded()
                             .foregroundStyle(Color.indigo)
@@ -91,7 +93,8 @@ struct EditInfoView: View {
                 }
             }
             .onAppear(perform: {
-                _ = parseSearchTerms()
+                // 标签
+                searchTerms(arr: parseSearchTerms())
                 // AppStorage
                 if asInspectorType == 0 {
                     inspectorType = .category
@@ -99,9 +102,13 @@ struct EditInfoView: View {
                     inspectorType = .customSearch
                 }
                 isShowInspector = asIsShowInspector
+                // 关联编辑
+                if info.relateName.isEmpty == false {
+                    isShowRelateTextField = true
+                }
             })
             .onChange(of: term) { oldValue, newValue in
-                _ = parseSearchTerms()
+                searchTerms(arr: parseSearchTerms())
             }
             .onChange(of: isShowInspector) { oldValue, newValue in
                 asIsShowInspector = newValue
@@ -113,13 +120,24 @@ struct EditInfoView: View {
                     asInspectorType = 1
                 }
             }
+            .onChange(of: info.relateName) { oldValue, newValue in
+                if info.relateName.isEmpty == true {
+                    isShowRelateTextField = false
+                } else {
+                    isShowRelateTextField = true
+                }
+            }
             Spacer()
         } // end VStack
     }
     
     // MARK: Image
     @State private var largeImageUrlStr = ""
+    #if os(macOS)
     @State private var largeNSImage: NSImage? = nil
+    #elseif os(iOS)
+    @State private var largeUIImage: UIImage? = nil
+    #endif
     
     @MainActor
     @ViewBuilder
@@ -148,6 +166,7 @@ struct EditInfoView: View {
                                 ForEach(Array(infoImgs.enumerated()), id:\.0) {i, img in
                                     VStack {
                                         if let data = img.imgData {
+                                            #if os(macOS)
                                             if let nsImg = NSImage(data: data) {
                                                 Image(nsImage: nsImg)
                                                     .resizable()
@@ -171,6 +190,31 @@ struct EditInfoView: View {
 
                                                     }
                                             }
+                                            #elseif os(iOS)
+                                            if let uiImg = UIImage(data: data) {
+                                                Image(uiImage: uiImg)
+                                                    .resizable()
+                                                    .scaledToFit()
+                                                    .cornerRadius(5)
+                                                    .onTapGesture(perform: {
+                                                        largeUIImage = uiImg
+                                                    })
+                                                    .contextMenu {
+                                                        Button {
+                                                            IOInfo.updateCoverImage(info: info, img: img)
+                                                        } label: {
+                                                            Label("设为封面图", image: "doc.text.image")
+                                                        }
+                                                        Button {
+                                                            info.imgs?.remove(at: i)
+                                                            IOImg.delete(img)
+                                                        } label: {
+                                                            Label("删除", image: "circle")
+                                                        }
+                                                        
+                                                    }
+                                            }
+                                        #endif
                                         } else if img.url.isEmpty == false {
                                             NukeImage(url: img.url)
                                             .contextMenu {
@@ -180,9 +224,13 @@ struct EditInfoView: View {
                                                     Label("设为封面图", image: "doc.text.image")
                                                 }
                                                 Button {
+                                                    #if os(macOS)
                                                     let p = NSPasteboard.general
-                                                    p.declareTypes([.string], owner: nil)
-                                                    p.setString(img.url, forType: .string)
+                                                    p.copyText(img.url)
+                                                    #elseif os(iOS)
+                                                    let p = UIPasteboard.general
+                                                    p.string = img.url
+                                                    #endif
                                                 } label: {
                                                     Label("复制图片链接", image: "circle")
                                                 }
@@ -213,9 +261,13 @@ struct EditInfoView: View {
                                         Label("设为封面图", image: "doc.text.image")
                                     }
                                     Button {
+                                        #if os(macOS)
                                         let p = NSPasteboard.general
-                                        p.declareTypes([.string], owner: nil)
-                                        p.setString(img, forType: .string)
+                                        p.copyText(img)
+                                        #elseif os(iOS)
+                                        let p = UIPasteboard.general
+                                        p.string = img
+                                        #endif
                                     } label: {
                                         Label("复制图片链接", image: "circle")
                                     }
@@ -237,6 +289,7 @@ struct EditInfoView: View {
                             }
                         }
                 }
+                #if os(macOS)
                 if largeNSImage != nil {
                     Image(nsImage: largeNSImage!)
                         .resizable()
@@ -247,11 +300,27 @@ struct EditInfoView: View {
                             }
                         }
                 }
+                #elseif os(iOS)
+                if largeUIImage != nil {
+                    Image(uiImage: largeUIImage!)
+                        .resizable()
+                        .scaledToFit()
+                        .onTapGesture {
+                            withAnimation {
+                                largeUIImage = nil
+                            }
+                        }
+                }
+                #endif
             }
         }
         .onChange(of: info, { oldValue, newValue in
             largeImageUrlStr = ""
+            #if os(macOS)
             largeNSImage = nil
+            #elseif os(iOS)
+            largeUIImage = nil
+            #endif
         })
         .padding(10)
         .tabItem { Label("图集", systemImage: "circle")}
@@ -284,7 +353,6 @@ struct EditInfoView: View {
     private func textAndPreviewView() -> some View {
         TextEditor(text: $info.des).border()
             .padding(10)
-            .contentMargins(.all, 30, for: .scrollContent)
             .tabItem { Label("文本", systemImage: "circle") }
             .tag(1)
 //        WebUIView(html: wrapperHtmlContent(content: MarkdownParser().html(from: info.des)), baseURLStr: "")
@@ -318,7 +386,7 @@ struct EditInfoView: View {
             })
             Button("管理分类", action: manageCate)
             if term.isEmpty == false {
-                Button("自定检索") {
+                Button("自定标签") {
                     showSheet = true
                 }
                 .help("command + s")
@@ -335,6 +403,7 @@ struct EditInfoView: View {
                                             showSheet = false
                                             info.des = "[\(oneTerm)]" + "\n" + info.des
                                         }
+                                        .fixedSize()
                                     }
                                 }
                                 Spacer()
@@ -355,7 +424,20 @@ struct EditInfoView: View {
                 .keyboardShortcut(KeyEquivalent("s"), modifiers: .command)
             }
 
-            Button("管理自定检索", action: manageCustomSearch)
+            Button("管理自定标签", action: manageCustomSearch)
+        }
+    }
+    
+    func fetchWebContent(urlString: String) async {
+        let re = await fetchTitleFromUrl(urlString:info.url)
+        await MainActor.run {
+            if re.title.isEmpty == false {
+                info.name = re.title
+                if re.imageUrl.isEmpty == false {
+                    IOInfo.updateCoverImage(info: info, img: IOImg(url: re.imageUrl))
+                }
+                info.imageUrls = re.imageUrls
+            }
         }
     }
     
@@ -365,18 +447,10 @@ struct EditInfoView: View {
             TextField("地址:", text: $info.url, prompt: Text("输入或粘贴 url，例如 https://starming.com")).rounded()
                 .onSubmit {
                     info.name = "获取标题中......"
+                    
                     Task {
                         // MARK: 获取 Web 内容
-                        let re = await fetchTitleFromUrl(urlString:info.url)
-                        DispatchQueue.main.async {
-                            if re.title.isEmpty == false {
-                                info.name = re.title
-                                if re.imageUrl.isEmpty == false {
-                                    IOInfo.updateCoverImage(info: info, img: IOImg(url: re.imageUrl))
-                                }
-                                info.imageUrls = re.imageUrls
-                            }
-                        }
+                        await fetchWebContent(urlString: info.url)
                     }
                 }
             if info.url.isEmpty == false {
@@ -384,16 +458,7 @@ struct EditInfoView: View {
                     info.name = "获取标题中......"
                     Task {
                         // MARK: 获取 Web 内容
-                        let re = await fetchTitleFromUrl(urlString:info.url)
-                        DispatchQueue.main.async {
-                            if re.title.isEmpty == false {
-                                info.name = re.title
-                                if re.imageUrl.isEmpty == false {
-                                    IOInfo.updateCoverImage(info: info, img: IOImg(url: re.imageUrl))
-                                }
-                                info.imageUrls = re.imageUrls
-                            }
-                        }
+                        await fetchWebContent(urlString: info.url)
                     }
                 } label: {
                     Image(systemName: "link")
@@ -445,11 +510,18 @@ struct EditInfoView: View {
                 Image(systemName: "arrow.up.square")
             })
             .help("提到前面")
+            Button {
+                isShowRelateTextField.toggle()
+            } label: {
+                Image(systemName: isShowRelateTextField == true ? "network.slash" : "network")
+            }
+            .help("关联编辑")
+            .keyboardShortcut(KeyEquivalent("r"), modifiers: .command)
         }
     }
 
     
-    // MARK: 自定检索
+    // MARK: 自定标签
     @AppStorage(SPC.customSearchTerm) var term = ""
     @State private var searchTerms: [[String]] = [[String]]()
     func parseSearchTerms() -> [[String]] {
@@ -471,8 +543,11 @@ struct EditInfoView: View {
                 sterms.append(lineTs)
             } // end if
         } // end for
-        searchTerms = sterms
         return sterms
+    }
+    
+    @MainActor func searchTerms(arr: [[String]]) {
+        searchTerms = arr
     }
     
     // MARK: 数据管理
